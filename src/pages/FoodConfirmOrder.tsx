@@ -4,6 +4,8 @@ import { motion } from 'framer-motion';
 import { ArrowLeft, MapPin, Bike, Car } from 'lucide-react';
 import { useFoodOrderSession } from '../contexts/FoodOrderSession';
 import { useFoodPayment } from '../contexts/FoodPaymentContext';
+import { useFirebaseRide } from '../hooks/useFirebaseRide';
+import { useUserProfile } from '../hooks/useUserProfile';
 
 export function FoodConfirmOrder() {
   const navigate = useNavigate();
@@ -15,6 +17,9 @@ export function FoodConfirmOrder() {
     deliveryLocation,
     clearCart
   } = useFoodOrderSession();
+
+  const { profile } = useUserProfile();
+  const { createRide } = useFirebaseRide();
 
   const currentLocationFoods = getCurrentLocationFoods();
   const foodSubtotal = currentLocationFoods.reduce((sum, item) => sum + item.price, 0);
@@ -41,25 +46,39 @@ export function FoodConfirmOrder() {
     setIsConfirming(true);
 
     try {
-      const deliveryOrderId = `delivery_${Date.now()}`;
-
-      const orderData = {
-        id: deliveryOrderId,
-        foods: currentLocationFoods,
-        foodSubtotal,
-        deliveryMode: selectedDeliveryMode,
-        deliveryFee,
-        total,
-        deliveryLocation,
-        status: 'pending',
-        createdAt: new Date().toISOString()
+      const foodRequest = {
+        pickup: currentLocationFoods[0]?.storeName || 'Restaurant',
+        destination: deliveryLocation || 'Current Location',
+        stops: [],
+        carType: selectedDeliveryMode || 'motorbike',
+        price: total,
+        status: 'pending' as const,
+        userId: profile?.id || 'user123',
+        userName: profile?.name || 'Unknown User',
       };
 
-      localStorage.setItem(`delivery_order_${deliveryOrderId}`, JSON.stringify(orderData));
+      const requestId = await createRide(foodRequest);
+
+      console.log('Food order created in Firebase:', requestId);
 
       setIsConfirming(false);
-      navigate('/food-waiting-driver', { state: { deliveryOrderId } });
+      navigate('/waiting-for-driver', {
+        state: {
+          currentRideId: requestId,
+          requestType: 'food',
+          foodItems: currentLocationFoods,
+          foodSubtotal,
+          deliveryFee,
+          deliveryMode: selectedDeliveryMode,
+          pickup: currentLocationFoods[0]?.storeName || 'Restaurant',
+          destination: deliveryLocation || 'Current Location',
+          stops: [],
+          carType: selectedDeliveryMode || 'motorbike',
+          price: total
+        }
+      });
     } catch (error) {
+      console.error('Error confirming food order:', error);
       setIsConfirming(false);
       alert('Error confirming order. Please try again.');
     }

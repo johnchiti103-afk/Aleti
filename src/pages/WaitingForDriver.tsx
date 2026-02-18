@@ -1,5 +1,4 @@
- // src/pages/WaitingForDriver.tsx
-import React, { useState, useEffect } from 'react';
+ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Edit, X, Plus, MapPin } from 'lucide-react';
 import { BottomNavigation } from '../components/BottomNavigation';
@@ -9,7 +8,7 @@ import { MapBackground } from '../components/MapBackground';
 import { useFirebaseRide } from '../hooks/useFirebaseRide';
 import { useUserProfile } from '../hooks/useUserProfile';
 import { calculatePriceWithStops, getCarTypePrice } from '../utils/priceCalculation';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { firebaseService } from '../services/firebaseService';
 
 interface WaitingForDriverProps {
@@ -44,18 +43,38 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
   deliveryFee = 0
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [progress, setProgress] = useState(0);
   const [showNoDriverPopup, setShowNoDriverPopup] = useState(false);
   const [showCancelConfirmation, setShowCancelConfirmation] = useState(false);
   const [isScanning, setIsScanning] = useState(true);
-  const { createRide, currentRide, isLoading, isAccepted } = useFirebaseRide(currentRideId);
+
+  const stateData = (location.state as any) || {};
+  const finalRequestType = stateData.requestType || requestType;
+  const finalCurrentRideId = stateData.currentRideId || currentRideId;
+  const finalFoodItems = stateData.foodItems || foodItems;
+  const finalFoodSubtotal = stateData.foodSubtotal || foodSubtotal;
+  const finalDeliveryFee = stateData.deliveryFee || deliveryFee;
+  const finalDeliveryMode = stateData.deliveryMode || deliveryMode;
+  const finalPickup = stateData.pickup || pickup;
+  const finalDestination = stateData.destination || destination;
+  const finalStops = stateData.stops || stops;
+  const finalCarType = stateData.carType || carType;
+  const finalPrice = stateData.price || price;
+
+  const { createRide, currentRide, isLoading, isAccepted } = useFirebaseRide(finalCurrentRideId);
   const { profile } = useUserProfile();
 
-  const isFood = requestType === 'food';
-  
-  // Recalculate price to ensure consistency
-  const priceCalculation = calculatePriceWithStops(pickup, destination, stops);
-  const finalPrice = getCarTypePrice(priceCalculation.totalPrice, carType);
+  const isFood = finalRequestType === 'food';
+
+  console.log('WaitingForDriver DEBUG:', {
+    requestType: finalRequestType,
+    currentRideId: finalCurrentRideId,
+    currentRide,
+    isAccepted,
+    isScanning,
+    foodItems: finalFoodItems
+  });
 
   // NOTE: Removed the auto-create useEffect that ran on mount.
   // The ConfirmOrder page is responsible for creating the initial ride request.
@@ -80,26 +99,28 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
 
   useEffect(() => {
     if (isAccepted) {
+      console.log('Driver accepted! Stopping scan and navigating...');
+      setIsScanning(false);
+      setProgress(100);
       setTimeout(() => {
         onDriverFound();
-      }, 2000);
+      }, 500);
     }
   }, [isAccepted, onDriverFound]);
 
   const handleRequestAgain = async () => {
-    if (isLoading) return; // prevent double requests
+    if (isLoading) return;
 
     setShowNoDriverPopup(false);
     setProgress(0);
     setIsScanning(true);
 
-    // Use profile info if available to match ConfirmOrder payload
     const rideRequest = {
-      destination,
-      pickup,
-      stops: stops || [],
-      carType,
-      price: finalPrice, // Use calculated price
+      destination: finalDestination,
+      pickup: finalPickup,
+      stops: finalStops || [],
+      carType: finalCarType,
+      price: finalPrice,
       status: 'pending' as const,
       userId: profile?.id || 'user123',
       userName: profile?.name || 'Unknown User',
@@ -107,10 +128,9 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
 
     try {
       const rideId = await createRide(rideRequest);
-      // After re-requesting, we keep scanning and allow listener (if any) to pick up acceptance.
+      console.log('Request again created:', rideId);
     } catch (error) {
       console.error('Failed to request again:', error);
-      // Optionally show an error toast to user here
     }
   };
 
@@ -120,11 +140,9 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
 
   const handleConfirmCancel = async () => {
     try {
-      // pick canonical rideId: prefer currentRide.id, else currentRideId, else search by user
-      let rideIdToCancel = currentRide?.id || currentRideId || null;
+      let rideIdToCancel = currentRide?.id || finalCurrentRideId || null;
 
       if (!rideIdToCancel && profile?.id) {
-        // Try to find a pending ride for this user
         rideIdToCancel = await firebaseService.findActiveRideByUser(profile.id);
       }
 
@@ -134,37 +152,34 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
         return;
       }
 
-      // Single status update
       await firebaseService.updateRideStatus(rideIdToCancel, 'cancelled');
 
       setShowCancelConfirmation(false);
 
-      // Navigate to WhatWentWrong and pass real rideId (not unknown-ride)
       navigate('/what-went-wrong', {
         state: {
           rideId: rideIdToCancel,
           userId: profile?.id || 'user123',
           userName: profile?.name || 'Unknown User',
-          destination,
-          pickup,
-          stops,
-          carType,
+          destination: finalDestination,
+          pickup: finalPickup,
+          stops: finalStops,
+          carType: finalCarType,
           price: finalPrice
         }
       });
     } catch (error) {
       console.error('Error cancelling ride:', error);
       setShowCancelConfirmation(false);
-      // still navigate but attempt to resolve ride id in WhatWentWrong
       navigate('/what-went-wrong', {
         state: {
-          rideId: currentRide?.id || currentRideId || null,
+          rideId: currentRide?.id || finalCurrentRideId || null,
           userId: profile?.id || 'user123',
           userName: profile?.name || 'Unknown User',
-          destination,
-          pickup,
-          stops,
-          carType,
+          destination: finalDestination,
+          pickup: finalPickup,
+          stops: finalStops,
+          carType: finalCarType,
           price: finalPrice
         }
       });
@@ -176,9 +191,9 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
   };
 
   const handleCancelRequest = async () => {
-    if (currentRide?.id || currentRideId) {
+    if (currentRide?.id || finalCurrentRideId) {
       try {
-        const rideIdToCancel = currentRide?.id || currentRideId!;
+        const rideIdToCancel = currentRide?.id || finalCurrentRideId!;
         await firebaseService.updateRideStatus(rideIdToCancel, 'cancelled');
       } catch (error) {
         console.error('Error cancelling ride:', error);
@@ -203,6 +218,9 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
             <h2 className="text-xl font-semibold text-gray-900 mb-4">
               {isFood ? 'Waiting for delivery driver' : 'Waiting for driver to confirm the order'}
             </h2>
+            {isAccepted && (
+              <p className="text-green-600 font-semibold">Driver accepted your request!</p>
+            )}
             
             {/* Progress bar */}
             <div className="w-full bg-gray-200 rounded-full h-1 mb-6">
@@ -274,29 +292,29 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
                 <div className="space-y-3">
                   <div className="flex items-center space-x-3">
                     <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-                    <span className="flex-1 text-gray-700">{pickup}</span>
+                    <span className="flex-1 text-gray-700">{finalPickup}</span>
                     <Edit className="text-gray-400" size={16} />
                   </div>
-                  
-                  {stops.map((stop, index) => (
+
+                  {finalStops.map((stop, index) => (
                     <div key={index} className="flex items-center space-x-3 ml-6">
                       <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
                       <span className="flex-1 text-gray-700">{stop}</span>
                       <Edit className="text-gray-400" size={16} />
                     </div>
                   ))}
-                  
+
                   <div className="flex items-center space-x-3 ml-6">
                     <Plus className="text-blue-600" size={16} />
                     <span className="text-blue-600 font-medium">Add stop</span>
                   </div>
-                  
+
                   <div className="flex items-center space-x-3">
                     <MapPin className="text-blue-600" size={12} />
-                    <span className="flex-1 text-gray-700">{destination}</span>
+                    <span className="flex-1 text-gray-700">{finalDestination}</span>
                     <Edit className="text-gray-400" size={16} />
                   </div>
-                  
+
                   <div className="flex items-center space-x-3 ml-6">
                     <MapPin className="text-gray-500" size={12} />
                     <span className="text-gray-500">Edit destinations</span>
@@ -305,7 +323,7 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
               </motion.div>
 
               {/* Food items (if food) */}
-              {isFood && foodItems.length > 0 && (
+              {isFood && finalFoodItems.length > 0 && (
                 <motion.div
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -313,7 +331,7 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
                 >
                   <h3 className="font-semibold text-gray-900 mb-3">Your Order</h3>
                   <div className="bg-gray-50 rounded-xl p-4 space-y-2">
-                    {foodItems.map((item, index) => (
+                    {finalFoodItems.map((item, index) => (
                       <div key={index} className="flex justify-between items-center text-sm">
                         <span className="text-gray-700">{item.name}</span>
                         <span className="font-medium text-gray-900">R {item.price}</span>
@@ -334,15 +352,15 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
                   <div className="bg-gray-50 rounded-xl p-4 space-y-2">
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-600">Food subtotal</span>
-                      <span className="font-medium text-gray-900">R {foodSubtotal}</span>
+                      <span className="font-medium text-gray-900">R {finalFoodSubtotal}</span>
                     </div>
                     <div className="flex justify-between text-sm">
-                      <span className="text-gray-600">Delivery fee ({deliveryMode})</span>
-                      <span className="font-medium text-gray-900">R {deliveryFee}</span>
+                      <span className="text-gray-600">Delivery fee ({finalDeliveryMode})</span>
+                      <span className="font-medium text-gray-900">R {finalDeliveryFee}</span>
                     </div>
                     <div className="flex justify-between pt-2 border-t border-gray-200">
                       <span className="font-bold text-gray-900">Total</span>
-                      <span className="font-bold text-green-600">R {price}</span>
+                      <span className="font-bold text-green-600">R {finalPrice}</span>
                     </div>
                   </div>
                 </motion.div>
@@ -363,7 +381,7 @@ export const WaitingForDriver: React.FC<WaitingForDriverProps> = ({
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">Cash</p>
-                        <p className="text-sm text-gray-500">{isFood ? `Delivery • ${deliveryMode}` : `Fare • ${carType}`}</p>
+                        <p className="text-sm text-gray-500">{isFood ? `Delivery • ${finalDeliveryMode}` : `Fare • ${finalCarType}`}</p>
                       </div>
                     </div>
                     <span className="font-bold text-gray-900">R {finalPrice}</span>
